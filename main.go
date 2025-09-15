@@ -11,8 +11,8 @@ import (
 )
 
 type config struct {
-	Next_url     string
-	Previous_url string
+	NextURL     string
+	PreviousURL string
 }
 
 type cliCommand struct {
@@ -23,8 +23,15 @@ type cliCommand struct {
 
 var commands map[string]cliCommand
 
-type LocationArea struct {
+type LocationAreaList struct {
+	Results  []LocationAreaResults `json:"results"`
+	Next     string                `json:"next"`
+	Previous string                `json:"previous"`
+}
+
+type LocationAreaResults struct {
 	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 func cleanInput(text string) []string {
@@ -47,12 +54,16 @@ func commandHelp() error {
 	return nil
 }
 
-func commandMap() error {
-	for i := 1; i <= 20; i++ {
-		url := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/%d", i)
-		resp, err := http.Get(url)
+func commandMap(cfg *config) func() error {
+	return func() error {
+		if cfg.NextURL == "" {
+			fmt.Println("you have reached the last page: use mapb to navigate to previous page")
+			return nil
+		}
+
+		resp, err := http.Get(cfg.NextURL)
 		if err != nil {
-			return fmt.Errorf("failed to fetch %s: %w", url, err)
+			return fmt.Errorf("failed to fetch %s: %w", cfg.NextURL, err)
 		}
 
 		body, err := io.ReadAll(resp.Body)
@@ -60,20 +71,58 @@ func commandMap() error {
 		if err != nil {
 			return fmt.Errorf("failed to read response: %w", err)
 		}
-		area := LocationArea{}
+		page := LocationAreaList{}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return fmt.Errorf("failed to unmarshal JSON: %w", err)
+		}
+		cfg.NextURL = page.Next
+		cfg.PreviousURL = page.Previous
+		for _, r := range page.Results {
+			fmt.Printf("%s\n", r.Name)
+		}
+
+		return nil
+	}
+}
+
+func commandMapBack(cfg *config) func() error {
+	return func() error {
+		if cfg.PreviousURL == "" {
+			fmt.Println("you are on page one")
+			return nil
+		}
+
+		resp, err := http.Get(cfg.PreviousURL)
+		if err != nil {
+			return fmt.Errorf("failed to fetch %s: %w", cfg.PreviousURL, err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+		resp.Body.Close()
+		area := LocationAreaList{}
 		if err := json.Unmarshal(body, &area); err != nil {
 			return fmt.Errorf("failed to unmarshal JSON: %w", err)
 		}
-		fmt.Printf("%s\n", area.Name)
+		cfg.NextURL = area.Next
+		cfg.PreviousURL = area.Previous
+		for i := range area.Results {
+			fmt.Printf("%s\n", area.Results[i].Name)
+		}
 
+		return nil
 	}
-	return nil
 }
 
 func main() {
 	fmt.Println("Welcome to the Pokedex!")
 	scanner := bufio.NewScanner(os.Stdin)
 
+	cfg := config{
+		NextURL: "https://pokeapi.co/api/v2/location-area/",
+	}
 	commands = map[string]cliCommand{
 		"exit": {
 			name:        "exit",
@@ -86,9 +135,14 @@ func main() {
 			callback:    commandHelp,
 		},
 		"map": {
-			name:        "help",
-			description: "display names of map locations",
-			callback:    commandMap,
+			name:        "map",
+			description: "display the next 20 names of map locations",
+			callback:    commandMap(&cfg),
+		},
+		"mapb": {
+			name:        "mapb",
+			description: "display the previous 20 names of map locations",
+			callback:    commandMapBack(&cfg),
 		},
 	}
 
@@ -97,6 +151,9 @@ func main() {
 		scanner.Scan()
 		text := scanner.Text()
 		cleaned := cleanInput(text)
+		if len(cleaned) == 0 {
+			continue
+		}
 		switch cleaned[0] {
 		case "exit":
 			commands["exit"].callback()
@@ -104,6 +161,8 @@ func main() {
 			commands["help"].callback()
 		case "map":
 			commands["map"].callback()
+		case "mapb":
+			commands["mapb"].callback()
 		default:
 			fmt.Print("Unknown Command\n")
 		}
