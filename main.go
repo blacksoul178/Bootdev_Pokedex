@@ -21,7 +21,7 @@ type config struct {
 type cliCommand struct {
 	name        string
 	description string
-	callback    func() error
+	callback    func(args []string) error
 }
 
 var commands map[string]cliCommand
@@ -37,19 +37,31 @@ type LocationAreaResults struct {
 	URL  string `json:"url"`
 }
 
+type exploreAreaResults struct {
+	PokemonEncounters []PokemonEncounters `json:"pokemon_encounters"`
+}
+
+type PokemonEncounters struct {
+	Pokemon Pokemon `json:"pokemon"`
+}
+type Pokemon struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
 func cleanInput(text string) []string {
 	lower_text := strings.ToLower(text)
 	split_text := strings.Fields(lower_text)
 	return split_text
 }
 
-func commandExit() error {
+func commandExit([]string) error {
 	fmt.Print("Closing the Pokedex... Goodbye!\n")
 	os.Exit(0)
 	return nil
 }
 
-func commandHelp() error {
+func commandHelp([]string) error {
 	fmt.Println("Usage:")
 	for name, cmd := range commands {
 		fmt.Printf("%s : %s\n", name, cmd.description)
@@ -57,8 +69,8 @@ func commandHelp() error {
 	return nil
 }
 
-func commandMap(cfg *config, cache *pokecache.Cache) func() error {
-	return func() error {
+func commandMap(cfg *config, cache *pokecache.Cache) func([]string) error {
+	return func([]string) error {
 		if cfg.NextURL == "" {
 			fmt.Println("you have reached the last page: use mapb to navigate to previous page")
 			return nil
@@ -97,8 +109,8 @@ func commandMap(cfg *config, cache *pokecache.Cache) func() error {
 	}
 }
 
-func commandMapBack(cfg *config, cache *pokecache.Cache) func() error {
-	return func() error {
+func commandMapBack(cfg *config, cache *pokecache.Cache) func([]string) error {
+	return func([]string) error {
 		if cfg.PreviousURL == "" {
 			fmt.Println("you are on page one")
 			return nil
@@ -123,14 +135,60 @@ func commandMapBack(cfg *config, cache *pokecache.Cache) func() error {
 			cache.Add(cfg.PreviousURL, body)
 		}
 
-		area := LocationAreaList{}
-		if err := json.Unmarshal(body, &area); err != nil {
+		page := LocationAreaList{}
+		if err := json.Unmarshal(body, &page); err != nil {
 			return fmt.Errorf("failed to unmarshal JSON: %w", err)
 		}
-		cfg.NextURL = area.Next
-		cfg.PreviousURL = area.Previous
-		for i := range area.Results {
-			fmt.Printf("%s\n", area.Results[i].Name)
+		cfg.NextURL = page.Next
+		cfg.PreviousURL = page.Previous
+		for i := range page.Results {
+			fmt.Printf("%s\n", page.Results[i].Name)
+		}
+
+		return nil
+	}
+}
+
+func commandExploreLocation(cache *pokecache.Cache) func([]string) error {
+	return func(exploreLocation []string) error {
+		if len(exploreLocation) < 1 {
+			fmt.Println("Please supply an area to explore")
+			return nil
+		}
+		if len(exploreLocation) > 1 {
+			fmt.Println("Please supply only ONE area to explore at a time")
+			return nil
+		}
+
+		fmt.Printf("Exploring %s...\n", exploreLocation[0])
+		var body []byte
+		locationURL := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/%s", exploreLocation[0])
+
+		cvalue, cbool := cache.Get(locationURL)
+		fmt.Printf("Cache found: %v, Value length: %d\n", cbool, len(cvalue))
+		if cbool && len(cvalue) > 0 {
+			body = cvalue
+		} else {
+			resp, err := http.Get(locationURL)
+			if err != nil {
+				return fmt.Errorf("failed to fetch %s: %w", locationURL, err)
+			}
+			defer resp.Body.Close()
+
+			body, err = io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read response: %w", err)
+			}
+			cache.Add(locationURL, body)
+		}
+
+		exploreResults := exploreAreaResults{}
+		if err := json.Unmarshal(body, &exploreResults); err != nil {
+			return fmt.Errorf("failed to unmarshal JSON: %w", err)
+		}
+		fmt.Println("Found Pokemon:")
+		for _, r := range exploreResults.PokemonEncounters {
+			fmt.Printf("-%s\n", r.Pokemon.Name)
 		}
 
 		return nil
@@ -140,7 +198,7 @@ func commandMapBack(cfg *config, cache *pokecache.Cache) func() error {
 func main() {
 	fmt.Println("Welcome to the Pokedex!")
 	scanner := bufio.NewScanner(os.Stdin)
-	cacheInterval := 10 * time.Second
+	cacheInterval := 30 * time.Second
 	cache := pokecache.NewCache(cacheInterval)
 
 	cfg := config{
@@ -167,6 +225,11 @@ func main() {
 			description: "display the previous 20 names of map locations",
 			callback:    commandMapBack(&cfg, cache),
 		},
+		"explore": {
+			name:        "explore",
+			description: "Explore a location to list all pokemon located there",
+			callback:    commandExploreLocation(cache),
+		},
 	}
 
 	for {
@@ -177,19 +240,31 @@ func main() {
 		if len(cleaned) == 0 {
 			continue
 		}
-		switch cleaned[0] {
-		case "exit":
-			commands["exit"].callback()
-		case "help":
-			commands["help"].callback()
-		case "map":
-			commands["map"].callback()
-		case "mapb":
-			commands["mapb"].callback()
-		default:
-			fmt.Print("Unknown Command\n")
-		}
+		cmd := cleaned[0]
+		args := cleaned[1:]
+		if c, ok := commands[cmd]; ok {
+			if err := c.callback(args); err != nil {
+				fmt.Println(err)
+			}
+		} else {
+			fmt.Println("Unknown Command")
 
+		}
 	}
+
+	// switch cleaned[0] {
+	// case "exit":
+	// 	commands["exit"].callback(cleaned[1:])
+	// case "help":
+	// 	commands["help"].callback(cleaned[1:])
+	// case "map":
+	// 	commands["map"].callback(cleaned[1:])
+	// case "mapb":
+	// 	commands["mapb"].callback(cleaned[1:])
+	// case "explore":
+	// 	commands["explore"].callback(cleaned[1:])
+	// default:
+	// 	fmt.Print("Unknown Command\n")
+	// }
 
 }
