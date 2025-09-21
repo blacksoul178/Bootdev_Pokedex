@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -49,6 +50,29 @@ type Pokemon struct {
 	URL  string `json:"url"`
 }
 
+type PokemonCatching struct {
+	Name    string         `json:"name"`
+	BaseExp int            `json:"base_experience"`
+	Stats   []PokemonStats `json:"stats"`
+}
+type Stat struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+type PokemonStats struct {
+	BaseStat int  `json:"base_stat"`
+	Effort   int  `json:"effort"`
+	Stat     Stat `json:"stat"`
+}
+type Type struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+type Types struct {
+	Slot int  `json:"slot"`
+	Type Type `json:"type"`
+}
+
 func cleanInput(text string) []string {
 	lower_text := strings.ToLower(text)
 	split_text := strings.Fields(lower_text)
@@ -78,7 +102,6 @@ func commandMap(cfg *config, cache *pokecache.Cache) func([]string) error {
 
 		var body []byte
 		cvalue, cbool := cache.Get(cfg.NextURL)
-		fmt.Printf("Cache found: %v, Value length: %d\n", cbool, len(cvalue))
 		if cbool && len(cvalue) > 0 {
 			body = cvalue
 		} else {
@@ -118,7 +141,6 @@ func commandMapBack(cfg *config, cache *pokecache.Cache) func([]string) error {
 
 		var body []byte
 		cvalue, cbool := cache.Get(cfg.PreviousURL)
-		fmt.Printf("Cache found: %v, Value length: %d\n", cbool, len(cvalue))
 		if cbool && len(cvalue) > 0 {
 			body = cvalue
 		} else {
@@ -165,7 +187,6 @@ func commandExploreLocation(cache *pokecache.Cache) func([]string) error {
 		locationURL := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/%s", exploreLocation[0])
 
 		cvalue, cbool := cache.Get(locationURL)
-		fmt.Printf("Cache found: %v, Value length: %d\n", cbool, len(cvalue))
 		if cbool && len(cvalue) > 0 {
 			body = cvalue
 		} else {
@@ -190,6 +211,59 @@ func commandExploreLocation(cache *pokecache.Cache) func([]string) error {
 		for _, r := range exploreResults.PokemonEncounters {
 			fmt.Printf("-%s\n", r.Pokemon.Name)
 		}
+
+		return nil
+	}
+}
+
+func commandCatch(cache *pokecache.Cache) func([]string) error {
+	return func(pokemonToCatch []string) error {
+		if len(pokemonToCatch) < 1 {
+			fmt.Println("Please supply which pokemon you which to catch")
+			return nil
+		}
+		if len(pokemonToCatch) > 1 {
+			fmt.Println("Please supply only ONE pokemon to catch at a time")
+			return nil
+		}
+
+		fmt.Printf("Throwing a Pokeball at %s...\n", pokemonToCatch[0])
+		var body []byte
+		catchURL := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%s", pokemonToCatch[0])
+
+		cvalue, cbool := cache.Get(catchURL)
+		if cbool && len(cvalue) > 0 {
+			body = cvalue
+		} else {
+			resp, err := http.Get(catchURL)
+			if err != nil {
+				return fmt.Errorf("failed to fetch %s: %w", catchURL, err)
+			}
+			defer resp.Body.Close()
+
+			body, err = io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read response: %w", err)
+			}
+			cache.Add(catchURL, body)
+		}
+
+		catchResults := PokemonCatching{}
+		if err := json.Unmarshal(body, &catchResults); err != nil {
+			return fmt.Errorf("failed to unmarshal JSON: %w", err)
+		}
+
+		roll := rand.Intn(100)
+		var scaler int = catchResults.BaseExp / 100
+		var toughness int = catchResults.BaseExp / (10 + scaler)
+		catchDifficulty := 40
+		if roll > (catchDifficulty + toughness) {
+			//TODO ADD TO POKEDEX
+			fmt.Printf("%s was caught!\n", pokemonToCatch[0])
+		} else {
+			fmt.Printf("%s escaped!\n", pokemonToCatch[0])
+		}
+		fmt.Printf("Roll : %v, diff : %v\n", roll, (catchDifficulty + toughness))
 
 		return nil
 	}
@@ -227,8 +301,13 @@ func main() {
 		},
 		"explore": {
 			name:        "explore",
-			description: "Explore a location to list all pokemon located there",
+			description: "Explore a location to list all pokemon located there, usage: explore [area]",
 			callback:    commandExploreLocation(cache),
+		},
+		"catch": {
+			name:        "catch",
+			description: "catch a pokemon, usage: catch [pokemon name]",
+			callback:    commandCatch(cache),
 		},
 	}
 
