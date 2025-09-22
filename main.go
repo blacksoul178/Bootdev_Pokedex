@@ -18,7 +18,6 @@ type config struct {
 	NextURL     string
 	PreviousURL string
 }
-
 type cliCommand struct {
 	name        string
 	description string
@@ -32,16 +31,13 @@ type LocationAreaList struct {
 	Next     string                `json:"next"`
 	Previous string                `json:"previous"`
 }
-
 type LocationAreaResults struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 }
-
 type exploreAreaResults struct {
 	PokemonEncounters []PokemonEncounters `json:"pokemon_encounters"`
 }
-
 type PokemonEncounters struct {
 	Pokemon Pokemon `json:"pokemon"`
 }
@@ -49,11 +45,13 @@ type Pokemon struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 }
-
 type PokemonCatching struct {
 	Name    string         `json:"name"`
 	BaseExp int            `json:"base_experience"`
+	Height  int            `json:"height"`
+	Weight  int            `json:"weight"`
 	Stats   []PokemonStats `json:"stats"`
+	Types   []Types        `json:"types"`
 }
 type Stat struct {
 	Name string `json:"name"`
@@ -72,19 +70,18 @@ type Types struct {
 	Slot int  `json:"slot"`
 	Type Type `json:"type"`
 }
+type Pokedex map[string]PokemonCatching
 
 func cleanInput(text string) []string {
 	lower_text := strings.ToLower(text)
 	split_text := strings.Fields(lower_text)
 	return split_text
 }
-
 func commandExit([]string) error {
 	fmt.Print("Closing the Pokedex... Goodbye!\n")
 	os.Exit(0)
 	return nil
 }
-
 func commandHelp([]string) error {
 	fmt.Println("Usage:")
 	for name, cmd := range commands {
@@ -92,7 +89,6 @@ func commandHelp([]string) error {
 	}
 	return nil
 }
-
 func commandMap(cfg *config, cache *pokecache.Cache) func([]string) error {
 	return func([]string) error {
 		if cfg.NextURL == "" {
@@ -131,7 +127,6 @@ func commandMap(cfg *config, cache *pokecache.Cache) func([]string) error {
 		return nil
 	}
 }
-
 func commandMapBack(cfg *config, cache *pokecache.Cache) func([]string) error {
 	return func([]string) error {
 		if cfg.PreviousURL == "" {
@@ -170,7 +165,6 @@ func commandMapBack(cfg *config, cache *pokecache.Cache) func([]string) error {
 		return nil
 	}
 }
-
 func commandExploreLocation(cache *pokecache.Cache) func([]string) error {
 	return func(exploreLocation []string) error {
 		if len(exploreLocation) < 1 {
@@ -215,21 +209,21 @@ func commandExploreLocation(cache *pokecache.Cache) func([]string) error {
 		return nil
 	}
 }
-
-func commandCatch(cache *pokecache.Cache) func([]string) error {
+func commandCatch(cache *pokecache.Cache, pokedex Pokedex) func([]string) error {
 	return func(pokemonToCatch []string) error {
 		if len(pokemonToCatch) < 1 {
-			fmt.Println("Please supply which pokemon you which to catch")
+			fmt.Println("Please supply which pokemon you wish to catch")
 			return nil
 		}
 		if len(pokemonToCatch) > 1 {
 			fmt.Println("Please supply only ONE pokemon to catch at a time")
 			return nil
 		}
+		name := pokemonToCatch[0]
 
-		fmt.Printf("Throwing a Pokeball at %s...\n", pokemonToCatch[0])
+		fmt.Printf("Throwing a Pokeball at %s...\n", name)
 		var body []byte
-		catchURL := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%s", pokemonToCatch[0])
+		catchURL := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%s", name)
 
 		cvalue, cbool := cache.Get(catchURL)
 		if cbool && len(cvalue) > 0 {
@@ -258,8 +252,13 @@ func commandCatch(cache *pokecache.Cache) func([]string) error {
 		var toughness int = catchResults.BaseExp / (10 + scaler)
 		catchDifficulty := 40
 		if roll > (catchDifficulty + toughness) {
-			//TODO ADD TO POKEDEX
-			fmt.Printf("%s was caught!\n", pokemonToCatch[0])
+			if _, ok := pokedex[name]; !ok {
+				pokedex[name] = catchResults
+				fmt.Printf("%s was caught!\n", pokemonToCatch[0])
+			} else {
+				fmt.Printf("%s already in pokedex\n", name)
+			}
+
 		} else {
 			fmt.Printf("%s escaped!\n", pokemonToCatch[0])
 		}
@@ -268,12 +267,43 @@ func commandCatch(cache *pokecache.Cache) func([]string) error {
 		return nil
 	}
 }
+func commandInspect(cache *pokecache.Cache, pokedex Pokedex) func([]string) error {
+	return func(pokemonToInspect []string) error {
+		if len(pokemonToInspect) < 1 {
+			fmt.Println("Please supply which pokemon you wish to inspect")
+			return nil
+		}
+		if len(pokemonToInspect) > 1 {
+			fmt.Println("Please supply only ONE pokemon to inspect at a time")
+			return nil
+		}
+		name := pokemonToInspect[0]
+		if _, ok := pokedex[name]; !ok {
+			fmt.Printf("you have not caught a %s yet", name)
+		} else {
+			fmt.Printf("Name: %s\n", pokedex[name].Name)
+			fmt.Printf("Height %v\n", pokedex[name].Height)
+			fmt.Printf("Weight: %v\n", pokedex[name].Weight)
+			fmt.Println("Stats:")
+			for _, s := range pokedex[name].Stats {
+				fmt.Printf("-%v: %v\n", s.BaseStat, s.Stat.Name)
+			}
+			fmt.Println("Type(s):")
+			for _, t := range pokedex[name].Types {
+				fmt.Printf("- %v\n", t.Type.Name)
+			}
+		}
+		return nil
+	}
 
+}
 func main() {
 	fmt.Println("Welcome to the Pokedex!")
 	scanner := bufio.NewScanner(os.Stdin)
 	cacheInterval := 30 * time.Second
 	cache := pokecache.NewCache(cacheInterval)
+
+	pokedex := make(Pokedex)
 
 	cfg := config{
 		NextURL: "https://pokeapi.co/api/v2/location-area/",
@@ -307,7 +337,12 @@ func main() {
 		"catch": {
 			name:        "catch",
 			description: "catch a pokemon, usage: catch [pokemon name]",
-			callback:    commandCatch(cache),
+			callback:    commandCatch(cache, pokedex),
+		},
+		"inspect": {
+			name:        "inspect",
+			description: "inspect the stats of a caught pokemon, use inspect [pokemon name]",
+			callback:    commandInspect(cache, pokedex),
 		},
 	}
 
