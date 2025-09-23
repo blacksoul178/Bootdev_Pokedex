@@ -267,7 +267,7 @@ func commandCatch(cache *pokecache.Cache, pokedex Pokedex) func([]string) error 
 		return nil
 	}
 }
-func commandInspect(cache *pokecache.Cache, pokedex Pokedex) func([]string) error {
+func commandInspect(pokedex Pokedex) func([]string) error {
 	return func(pokemonToInspect []string) error {
 		if len(pokemonToInspect) < 1 {
 			fmt.Println("Please supply which pokemon you wish to inspect")
@@ -297,6 +297,21 @@ func commandInspect(cache *pokecache.Cache, pokedex Pokedex) func([]string) erro
 	}
 
 }
+func commandPokedex(pokedex Pokedex) func([]string) error {
+	return func([]string) error {
+		if len(pokedex) == 0 {
+			fmt.Println("your pokedex is empty")
+			return nil
+		}
+		fmt.Println("Your Pokedex:")
+		for _, pokemon := range pokedex {
+			fmt.Printf("- %s\n", pokemon.Name)
+		}
+		return nil
+	}
+
+}
+
 func main() {
 	fmt.Println("Welcome to the Pokedex!")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -342,7 +357,12 @@ func main() {
 		"inspect": {
 			name:        "inspect",
 			description: "inspect the stats of a caught pokemon, use inspect [pokemon name]",
-			callback:    commandInspect(cache, pokedex),
+			callback:    commandInspect(pokedex),
+		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Enumerates all caught pokemons",
+			callback:    commandPokedex(pokedex),
 		},
 	}
 
